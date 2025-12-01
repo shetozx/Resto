@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="HandheldFriendly" content="true">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <title>ProVoice - سينما لايف</title>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/js/all.min.js"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@300;400;500;700;900&display=swap" rel="stylesheet">
+
+    <!-- Player Libraries -->
+    <link rel="stylesheet" href="https://cdn.plyr.io/3.7.8/plyr.css" />
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <script src="https://cdn.plyr.io/3.7.8/plyr.polyfilled.js"></script>
+
+    <!-- Firebase -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-auth-compat.js"></script>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="bg-[#020617] text-gray-100 font-sans overflow-hidden selection:bg-amber-500 selection:text-black">
+
+    <div id="toastContainer" class="fixed top-6 left-6 z-[100] flex flex-col gap-3 pointer-events-none w-80"></div>
+
+    <div id="loginScreen" class="fixed inset-0 z-50 flex flex-col items-center justify-center p-4 bg-[#020617] transition-all duration-500">
+        <div class="glass w-full max-w-md p-8 rounded-3xl animate-float relative z-10 text-center">
+            <div class="w-20 h-20 bg-gradient-to-tr from-amber-500 to-purple-600 rounded-2xl flex items-center justify-center mx-auto mb-6 shadow-lg">
+                <i class="fas fa-film text-4xl text-white"></i>
+            </div>
+            <h1 class="text-3xl font-bold text-white mb-2">ProVoice Cinema</h1>
+            <p class="text-gray-400 text-sm mb-6">سينما ومحادثة صوتية متزامنة</p>
+
+            <div class="space-y-4">
+                <input type="text" id="roomCode" class="w-full glass-input px-6 py-3 rounded-xl text-center uppercase tracking-widest" placeholder="كود الغرفة" maxlength="10">
+                <input type="password" id="roomPassword" class="w-full glass-input px-6 py-3 rounded-xl text-center" placeholder="كلمة السر (اختياري)">
+                <button onclick="manualJoin()" class="w-full bg-gradient-to-r from-amber-600 to-purple-600 text-white py-4 rounded-xl font-bold shadow-lg hover:shadow-amber-500/20 transition-all">
+                    <i class="fas fa-sign-in-alt ml-2"></i> دخول الغرفة
+                </button>
+            </div>
+            <div class="mt-4">
+                <button onclick="openProfileModal()" class="text-sm text-amber-500 hover:text-amber-400 underline transition-colors">
+                    <i class="fas fa-user-edit ml-1"></i> تغيير الاسم
+                </button>
+            </div>
+            <div class="mt-6 text-sm text-gray-400">
+                <button onclick="prepareCreateRoom()" class="hover:text-white border-b border-transparent hover:border-amber-500 pb-1 transition-all">
+                    <i class="fas fa-plus-circle ml-1"></i> إنشاء غرفة جديدة
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="appScreen" class="hidden fixed inset-0 z-0 flex overflow-hidden bg-gradient-to-br from-gray-900 to-black">
+
+        <main class="flex-1 flex flex-col h-full relative transition-all duration-300" id="mainArea">
+            <header class="h-16 glass border-b-0 z-20 flex items-center justify-between px-6 shrink-0">
+                <div class="flex items-center gap-4">
+                    <h2 class="font-bold text-white flex items-center gap-2">
+                        <i class="fas fa-circle text-[10px] text-green-500 animate-pulse"></i> 
+                        <span id="displayRoomCode">CODE</span>
+                    </h2>
+                    <button onclick="copyRoomCode()" class="text-xs px-3 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white transition-all" title="نسخ الكود">
+                        <i class="fas fa-copy ml-1"></i> نسخ
+                    </button>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button onclick="toggleSpeakerMode()" id="speakerBtn" class="p-2 rounded-lg bg-white/5 hover:bg-white/20 text-white transition-all relative" title="تبديل السماعة">
+                        <i class="fas fa-volume-up"></i>
+                    </button>
+
+                    <button onclick="toggleStreamModal()" id="streamBtn" class="hidden p-2 rounded-lg hover:bg-white/10 text-purple-400 hover:text-white transition-all" title="إدارة البث">
+                        <i class="fas fa-play-circle text-xl"></i>
+                    </button>
+                    <button onclick="toggleChat()" class="p-2 rounded-lg hover:bg-white/10 text-white relative transition-all" title="المحادثة">
+                        <i class="fas fa-comment-alt text-xl"></i>
+                        <span id="chatBadge" class="hidden absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border border-black animate-pulse"></span>
+                    </button>
+                    <button onclick="leaveRoom()" class="text-red-500 hover:bg-red-500/10 px-3 py-1 rounded-lg transition-all" title="مغادرة">
+                        <i class="fas fa-power-off"></i>
+                    </button>
+                </div>
+            </header>
+
+            <div id="cinemaContainer" class="hidden w-full max-h-[50vh] md:max-h-[60vh] bg-black relative shrink-0 shadow-2xl flex justify-center items-center border-b border-white/10">
+                <div class="w-full max-w-5xl aspect-video relative">
+                    <!-- The overlay is REMOVED as requested -->
+                    <video id="player" playsinline></video>
+
+                    <!-- NEW "LIVE" BUTTON -->
+                    <button id="liveButton" class="hidden absolute top-4 right-4 z-40 px-4 py-2 rounded-lg text-xs font-bold text-white transition-all duration-300 flex items-center gap-2">
+                        <span class="live-dot"></span>
+                        <span>LIVE</span>
+                    </button>
+                </div>
+                <div id="syncIndicator" class="absolute top-4 left-4 bg-black/80 backdrop-blur-sm px-4 py-2 rounded-lg text-xs text-green-400 z-40 pointer-events-none opacity-0 transition-opacity shadow-lg">
+                    <i class="fas fa-sync fa-spin ml-1"></i> مزامنة...
+                </div>
+                <div id="bufferingIndicator" class="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm z-40 pointer-events-none opacity-0 transition-opacity">
+                    <div class="text-center">
+                        <i class="fas fa-circle-notch fa-spin text-4xl text-amber-500 mb-2"></i>
+                        <p class="text-sm text-white">جاري التحميل...</p>
+                    </div>
+                </div>
+            </div>
+
+            <div class="flex-1 overflow-y-auto custom-scroll p-4" id="gridWrapper">
+                <div id="participantsGrid" class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4 pb-24"></div>
+            </div>
+
+            <div class="absolute bottom-6 left-0 right-0 flex justify-center z-30 px-4 pointer-events-none">
+                <div class="glass px-6 py-3 rounded-full flex items-center gap-6 shadow-2xl pointer-events-auto border-t border-white/10">
+                    <button onclick="toggleMute()" id="mainMuteBtn" class="w-12 h-12 rounded-full bg-white text-black flex items-center justify-center text-xl transition-all hover:scale-110 shadow-lg shadow-white/20" title="كتم/إلغاء الكتم">
+                        <i class="fas fa-microphone"></i>
+                    </button>
+
+                    <div class="flex items-end gap-1 h-8" id="localVisualizer">
+                        <div class="bar h-2 bg-green-500 w-1 rounded-full"></div>
+                        <div class="bar h-3 bg-green-500 w-1 rounded-full"></div>
+                        <div class="bar h-2 bg-green-500 w-1 rounded-full"></div>
+                    </div>
+
+                    <div class="flex gap-3 border-l border-white/10 pl-4">
+                        <button onclick="sendReaction('❤️')" class="text-2xl hover:scale-125 hover:-translate-y-2 transition-all" title="قلب">❤️</button>
+                        <button onclick="sendReaction('😂')" class="text-2xl hover:scale-125 hover:-translate-y-2 transition-all" title="ضحك">😂</button>
+                        <button onclick="sendReaction('👏')" class="text-2xl hover:scale-125 hover:-translate-y-2 transition-all" title="تصفيق">👏</button>
+                        <button onclick="sendReaction('👍')" class="text-2xl hover:scale-125 hover:-translate-y-2 transition-all" title="إعجاب">👍</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <aside id="chatSidebar" class="fixed inset-y-0 left-0 w-80 glass border-r border-white/10 z-40 transform -translate-x-full transition-transform duration-300 flex flex-col bg-[#0f172a]/95 backdrop-blur-xl shadow-2xl">
+            <div class="p-4 border-b border-white/10 flex justify-between items-center bg-black/20">
+                <h3 class="font-bold text-white flex items-center gap-2">
+                    <i class="fas fa-comments"></i> المحادثة
+                </h3>
+                <button onclick="toggleChat()" class="text-gray-400 hover:text-white transition-colors">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+            <div id="chatMessages" class="flex-1 overflow-y-auto custom-scroll p-4 space-y-3 flex flex-col"></div>
+            <form onsubmit="sendMessage(event)" class="p-4 border-t border-white/10 bg-black/20">
+                <div class="relative">
+                    <input type="text" id="chatInput" class="w-full glass-input pl-4 pr-10 py-3 rounded-xl text-sm" placeholder="اكتب رسالة..." autocomplete="off" maxlength="500">
+                    <button type="submit" class="absolute left-2 top-1/2 -translate-y-1/2 text-amber-500 hover:text-amber-400 transition-colors">
+                        <i class="fas fa-paper-plane"></i>
+                    </button>
+                </div>
+            </form>
+        </aside>
+    </div>
+
+    <div id="profileModal" class="hidden fixed inset-0 z-[150] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="glass p-6 rounded-2xl w-full max-w-sm text-center relative animate-float">
+            <div class="w-16 h-16 bg-gradient-to-tr from-amber-500 to-purple-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                <i class="fas fa-user text-2xl text-white"></i>
+            </div>
+            <h3 class="text-xl font-bold text-white mb-4">إعداد الملف الشخصي</h3>
+            <input type="text" id="profileNameInput" class="w-full glass-input px-4 py-3 rounded-lg mb-4 text-center font-bold" placeholder="اكتب اسمك هنا" maxlength="20">
+            <button onclick="saveProfile()" class="w-full bg-amber-600 text-white py-3 rounded-lg font-bold hover:bg-amber-500 transition-colors shadow-lg">
+                <i class="fas fa-check ml-2"></i> حفظ ومتابعة
+            </button>
+        </div>
+    </div>
+
+    <div id="streamModal" class="hidden fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="glass p-6 rounded-2xl w-full max-w-lg relative">
+            <button onclick="toggleStreamModal()" class="absolute top-4 left-4 text-gray-400 hover:text-white transition-colors">
+                <i class="fas fa-times"></i>
+            </button>
+            <div class="text-center mb-4">
+                <div class="w-16 h-16 bg-gradient-to-tr from-purple-500 to-pink-600 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                    <i class="fas fa-film text-3xl text-white"></i>
+                </div>
+                <h3 class="text-xl font-bold text-white text-amber-500">سينما البث المباشر</h3>
+                <p class="text-xs text-gray-400 mt-2">الجميع سيشاهد ما تشاهده بتزامن كامل</p>
+            </div>
+            <div class="space-y-4">
+                <div>
+                    <label class="text-xs text-gray-400 block mb-2">رابط الفيديو (YouTube, M3U8, MP4)</label>
+                    <input type="url" id="streamUrl" class="w-full glass-input px-4 py-3 rounded-lg text-left text-sm" placeholder="https://..." dir="ltr">
+                </div>
+                <button onclick="startStream()" class="w-full bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 text-white py-3 rounded-lg font-bold shadow-lg shadow-purple-900/20 transition-all">
+                    <i class="fas fa-play ml-2"></i> بدء العرض الجماعي
+                </button>
+                <button onclick="stopStream()" class="w-full bg-red-500/10 hover:bg-red-500/20 text-red-500 py-2 rounded-lg text-sm border border-red-500/20 transition-all">
+                    <i class="fas fa-stop ml-2"></i> إيقاف البث وإغلاق السينما
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="createRoomModal" class="hidden fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4 backdrop-blur-sm">
+        <div class="glass p-6 rounded-2xl w-full max-w-sm relative">
+            <button onclick="document.getElementById('createRoomModal').classList.add('hidden')" class="absolute top-4 left-4 text-gray-400 hover:text-white transition-colors">
+                <i class="fas fa-times"></i>
+            </button>
+            <div class="text-center mb-4">
+                <div class="w-16 h-16 bg-gradient-to-tr from-green-500 to-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-3">
+                    <i class="fas fa-plus-circle text-3xl text-white"></i>
+                </div>
+                <h3 class="text-xl font-bold text-white">إنشاء غرفة جديدة</h3>
+            </div>
+            <input type="password" id="newRoomPassword" class="w-full glass-input px-4 py-3 rounded-lg mb-4" placeholder="كلمة مرور (اختياري)" maxlength="20">
+            <button onclick="createRoom()" class="w-full bg-gradient-to-r from-green-600 to-blue-600 text-white py-3 rounded-lg font-bold hover:from-green-500 hover:to-blue-500 transition-all shadow-lg">
+                <i class="fas fa-check ml-2"></i> إنشاء الغرفة
+            </button>
+        </div>
+    </div>
+
+    <script src="player.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
