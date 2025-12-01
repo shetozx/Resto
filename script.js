@@ -407,40 +407,42 @@ function toggleStreamModal() {
 }
 
 async function startStream() {
-  const url = document.getElementById("streamUrl").value.trim();
-  if (!url) {
-    showToast("أدخل رابط الفيديو", "error");
-    return;
-  }
+    const url = document.getElementById("streamUrl").value.trim();
 
-  if (!isAdmin) {
-    showToast("غير مسموح - أنت لست مدير الغرفة", "error");
-    return;
-  }
+    if (!url) {
+        showToast("أدخل رابط الفيديو", "error");
+        return;
+    }
 
-  try {
-    toggleStreamModal();
+    if (!isAdmin) {
+        showToast("غير مسموح - أنت لست مدير الغرفة", "error");
+        return;
+    }
 
-    const finalURL = wrapWithProxy(url);
+    try {
+        toggleStreamModal();
 
-    await db.collection("rooms").doc(currentRoomId).update({
-      streamConfig: {
-        url: finalURL,
-        active: true,
-        state: {
-          time: 0,
-          paused: true,
-          ts: firebase.firestore.FieldValue.serverTimestamp(),
-        },
-      },
-    });
+        const finalURL = wrapWithProxy(url);
 
-    showToast("تم بدء البث", "success");
-  } catch (e) {
-    console.error("Start stream error:", e);
-    showToast("فشل بدء البث", "error");
-  }
+        await db.collection("rooms").doc(currentRoomId).update({
+            streamConfig: {
+                url: finalURL,
+                active: true,
+                state: {
+                    time: 0,
+                    paused: true,
+                    ts: firebase.firestore.FieldValue.serverTimestamp(),
+                },
+            },
+        });
+
+        showToast("تم بدء البث", "success");
+    } catch (err) {
+        console.error(err);
+        showToast("خطأ في بدء البث", "error");
+    }
 }
+
 
 async function stopStream() {
   if (!isAdmin) {
