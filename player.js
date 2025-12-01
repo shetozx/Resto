@@ -1,4 +1,4 @@
-// player.js (Final Version)
+// player.js (Updated Version with Protected URLs Support)
 
 const VideoPlayer = {
     player: null,
@@ -168,8 +168,17 @@ const VideoPlayer = {
 
         if (this.hls) this.hls.destroy();
 
+        // Check if URL needs special referrer (like hakunaymatata CDN)
+        const needsReferrer = url.includes('hakunaymatata.com') || url.includes('lok-lok');
+
         if (url.endsWith('.m3u8') && Hls.isSupported()) {
-            this.hls = new Hls();
+            const hlsConfig = needsReferrer ? {
+                xhrSetup: (xhr) => {
+                    xhr.setRequestHeader('Referer', 'https://lok-lok.cc/');
+                }
+            } : {};
+            
+            this.hls = new Hls(hlsConfig);
             this.hls.loadSource(url);
             this.hls.attachMedia(videoElement);
         } else if (url.includes('youtube.com') || url.includes('youtu.be')) {
@@ -178,6 +187,42 @@ const VideoPlayer = {
                 sources: [{ src: url, provider: 'youtube' }],
             };
         } else {
+            // For direct MP4 files that need referrer, use blob approach
+            if (needsReferrer) {
+                this.loadProtectedVideo(url, videoElement);
+            } else {
+                this.player.source = {
+                    type: 'video',
+                    sources: [{ src: url }],
+                };
+            }
+        }
+    },
+
+    // Load videos that require specific referrer
+    async loadProtectedVideo(url, videoElement) {
+        try {
+            const response = await fetch(url, {
+                method: 'GET',
+                mode: 'cors',
+                credentials: 'omit',
+                headers: {
+                    'Referer': 'https://lok-lok.cc/'
+                }
+            });
+
+            if (!response.ok) throw new Error('Failed to load video');
+
+            const blob = await response.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            
+            this.player.source = {
+                type: 'video',
+                sources: [{ src: blobUrl }],
+            };
+        } catch (error) {
+            console.error('Error loading protected video:', error);
+            // Fallback: try direct load anyway
             this.player.source = {
                 type: 'video',
                 sources: [{ src: url }],
@@ -235,7 +280,7 @@ const VideoPlayer = {
         }
     },
 
-    // 9. NEW: Setup for the "LIVE" button
+    // 9. Setup for the "LIVE" button
     setupLiveButton() {
         const liveButton = document.getElementById('liveButton');
         if (liveButton && !this.isAdmin) {
@@ -243,7 +288,7 @@ const VideoPlayer = {
         }
     },
 
-    // 10. NEW: Logic for the "LIVE" button to jump to the live point
+    // 10. Logic for the "LIVE" button to jump to the live point
     jumpToLive() {
         if (!this.player || this.isAdmin || !this.lastAdminState) return;
 
@@ -266,7 +311,7 @@ const VideoPlayer = {
         }, 1500);
     },
 
-    // 11. NEW: Calculate the theoretical "live" point in time
+    // 11. Calculate the theoretical "live" point in time
     calculateLivePoint() {
         const state = this.lastAdminState;
         if (!state) return { expectedTime: 0, isServerPaused: true };
@@ -284,7 +329,7 @@ const VideoPlayer = {
         return { expectedTime, isServerPaused };
     },
 
-    // 12. NEW: Check if the user is in sync and update the LIVE button
+    // 12. Check if the user is in sync and update the LIVE button
     checkLiveStatus() {
         if (this.isAdmin || !this.player || !this.lastAdminState) return;
 
