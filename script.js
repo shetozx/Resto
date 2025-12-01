@@ -91,6 +91,14 @@ function updateProfileUI() {
   document.getElementById("profileNameInput").value = currentUserName;
 }
 
+
+function wrapWithProxy(url) {
+    const PROXY_ENDPOINT = "https://supermod.shetozxneno.workers.dev/?url=";
+    return PROXY_ENDPOINT + encodeURIComponent(url);
+}
+
+
+
 // ================= ROOM LOGIC =================
 function manualJoin() {
   joinRoom(false);
@@ -413,9 +421,11 @@ async function startStream() {
   try {
     toggleStreamModal();
 
+    const finalURL = wrapWithProxy(url);
+
     await db.collection("rooms").doc(currentRoomId).update({
       streamConfig: {
-        url: url,
+        url: finalURL,
         active: true,
         state: {
           time: 0,
