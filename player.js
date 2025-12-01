@@ -1,5 +1,26 @@
-// player.js (Updated Version with Protected URLs Support)
+// ===========================================
+// Cloudflare Worker Proxy Wrapper
+// ===========================================
+const PROXY_ENDPOINT = "https://supermod.shetozxneno.workers.dev/?url=";
 
+function wrapWithProxy(url) {
+    const needsProxy =
+        url.includes("hakunaymatata") ||
+        url.includes("lok-lok") ||
+        url.includes("shetozx") ||
+        url.includes("sign=") ||
+        url.includes("token=") ||
+        url.includes(".mp4") ||
+        url.includes(".m3u8");
+
+    return needsProxy
+        ? PROXY_ENDPOINT + encodeURIComponent(url)
+        : url;
+}
+
+// ===========================================
+// FINAL PLAYER SYSTEM WITH PROXY SUPPORT
+// ===========================================
 const VideoPlayer = {
     player: null,
     db: null,
@@ -12,9 +33,8 @@ const VideoPlayer = {
     hls: null,
     roomUnsubscribe: null,
     currentUrl: null,
-    lastAdminState: null, // Store the last known state from admin
+    lastAdminState: null,
 
-    // 1. Initialize the player system
     init(db, roomId, userId, isAdmin) {
         this.db = db;
         this.roomId = roomId;
@@ -22,328 +42,228 @@ const VideoPlayer = {
         this.isAdmin = isAdmin;
         this.lastAdminState = null;
 
-        // Register Service Worker for protected URLs
-        this.registerServiceWorker();
-
         this.setupPlayer();
         this.applyRolePermissions();
         this.listenForSync();
         this.setupLiveButton();
     },
 
-    // Register Service Worker
-    async registerServiceWorker() {
-        if ('serviceWorker' in navigator) {
-            try {
-                const registration = await navigator.serviceWorker.register('/sw.js');
-                console.log('Service Worker registered:', registration.scope);
-                
-                // Wait for service worker to be ready
-                await navigator.serviceWorker.ready;
-                console.log('Service Worker ready');
-            } catch (error) {
-                console.warn('Service Worker registration failed:', error);
-            }
-        }
-    },
-
-    // 2. Setup Plyr instance and its event listeners
     setupPlayer() {
         const videoElement = document.getElementById('player');
-        // Ensure native fullscreen is preferred and works on all devices
-        const config = {
+        this.player = new Plyr(videoElement, {
             controls: [
-                'play-large', 'play', 'progress', 'current-time', 
-                'mute', 'volume', 'captions', 'settings', 'pip', 'airplay', 'fullscreen'
+                'play-large', 'play', 'progress', 'current-time',
+                'mute', 'volume', 'captions', 'settings',
+                'pip', 'airplay', 'fullscreen'
             ],
-            // Use 'native' for fullscreen to ensure it works on mobile devices
-            fullscreen: { enabled: true, fallback: true, iosNative: true }, 
+            fullscreen: { enabled: true, fallback: true, iosNative: true },
             clickToPlay: false,
             keyboard: { focused: false, global: false },
-        };
+        });
 
-        this.player = new Plyr(videoElement, config);
-
-        // UI Indicators
         this.player.on('waiting', () => document.getElementById("bufferingIndicator").style.opacity = "1");
         this.player.on('canplay', () => document.getElementById("bufferingIndicator").style.opacity = "0");
+
         this.player.on('playing', () => {
             document.getElementById("bufferingIndicator").style.opacity = "0";
-            if (!this.isAdmin) this.checkLiveStatus(); // Update live button status
+            if (!this.isAdmin) this.checkLiveStatus();
         });
+
         this.player.on('timeupdate', () => {
-            if (!this.isAdmin && !this.player.paused) this.checkLiveStatus(); // Check on time update
+            if (!this.isAdmin && !this.player.paused) this.checkLiveStatus();
         });
+
         this.player.on('pause', () => {
-            if (!this.isAdmin) this.checkLiveStatus(); // Also check on pause
+            if (!this.isAdmin) this.checkLiveStatus();
         });
+
         this.player.on('error', e => console.error("Player error:", e));
     },
 
-    // 3. Apply UI changes based on user role
     applyRolePermissions() {
-        const playerContainer = this.player.elements.container;
+        const container = this.player.elements.container;
         const liveButton = document.getElementById('liveButton');
 
         if (this.isAdmin) {
-            playerContainer.classList.remove('player-user-view');
-            if(liveButton) liveButton.classList.add('hidden'); // Admin doesn't need live button
+            container.classList.remove('player-user-view');
+            if (liveButton) liveButton.classList.add('hidden');
             this.setupAdminControls();
         } else {
-            playerContainer.classList.add('player-user-view');
-            // Show button for users if stream is active
+            container.classList.add('player-user-view');
             if (this.lastAdminState && this.currentUrl) {
-                if(liveButton) liveButton.classList.remove('hidden');
-            } else {
-                if(liveButton) liveButton.classList.add('hidden');
+                liveButton.classList.remove('hidden');
             }
         }
     },
 
-    // 4. For Admins: Push state to Firestore
     setupAdminControls() {
         const updateState = () => {
-            if (this.isSyncing || !this.isAdmin || !this.player) return;
+            if (!this.isAdmin || !this.player) return;
 
-            const state = {
-                paused: this.player.paused,
-                time: this.player.currentTime,
-                ts: firebase.firestore.FieldValue.serverTimestamp()
-            };
-
-            this.db.collection("rooms").doc(this.roomId).update({ "streamConfig.state": state })
-                .catch(e => console.error("Admin: Error updating state", e));
+            this.db.collection("rooms").doc(this.roomId).update({
+                "streamConfig.state": {
+                    paused: this.player.paused,
+                    time: this.player.currentTime,
+                    ts: firebase.firestore.FieldValue.serverTimestamp()
+                }
+            });
         };
 
         this.player.on('play', updateState);
         this.player.on('pause', updateState);
         this.player.on('seeked', updateState);
 
-        // More frequent updates for smoother experience
         if (this.syncInterval) clearInterval(this.syncInterval);
         this.syncInterval = setInterval(() => {
-            if (this.player && !this.player.paused && this.isAdmin) {
-                updateState();
-            }
-        }, 3000); // Update every 3 seconds
+            if (!this.player.paused && this.isAdmin) updateState();
+        }, 3000);
     },
 
-    // 5. Listen to Firestore for stream data
     listenForSync() {
         if (this.roomUnsubscribe) this.roomUnsubscribe();
-        this.roomUnsubscribe = this.db.collection("rooms").doc(this.roomId).onSnapshot(doc => {
-            if (doc.exists) {
-                const data = doc.data();
-                if (data && data.streamConfig) {
-                    this.handleStreamData(data.streamConfig);
-                }
-            }
-        });
+
+        this.roomUnsubscribe = this.db.collection("rooms")
+            .doc(this.roomId)
+            .onSnapshot(doc => {
+                if (doc.exists) this.handleStreamData(doc.data().streamConfig);
+            });
     },
 
-    // 6. Process incoming stream data
     handleStreamData(config) {
-        const cinemaContainer = document.getElementById('cinemaContainer');
-        const liveButton = document.getElementById('liveButton');
+        const cinema = document.getElementById("cinemaContainer");
+        const liveButton = document.getElementById("liveButton");
 
         if (!config || !config.active) {
-            cinemaContainer.classList.add('hidden');
-            if(liveButton) liveButton.classList.add('hidden');
+            cinema.classList.add("hidden");
+            if (liveButton) liveButton.classList.add("hidden");
             if (this.player) this.player.stop();
             this.currentUrl = null;
             this.lastAdminState = null;
             return;
         }
 
-        // If stream is active, show the player
-        cinemaContainer.classList.remove('hidden');
-        if (!this.isAdmin && liveButton) liveButton.classList.remove('hidden');
+        cinema.classList.remove("hidden");
+        if (!this.isAdmin) liveButton.classList.remove("hidden");
 
-        // Load new video source if URL changes
-        if (this.currentUrl !== config.url) {
-            this.loadSource(config.url);
-        }
+        if (this.currentUrl !== config.url) this.loadSource(config.url);
 
-        // Store the latest state and sync for non-admins
         if (config.state) {
-            // Convert Firestore Timestamp to milliseconds
-            const state = { ...config.state };
-            if (state.ts && typeof state.ts.toMillis === 'function') {
-                state.ts = state.ts.toMillis();
-            }
-            this.lastAdminState = state; // Always keep the latest state
+            const s = config.state;
+            s.ts = s.ts?.toMillis?.() ?? Date.now();
+            this.lastAdminState = s;
 
-            if (!this.isAdmin) {
-                this.syncToState(state);
-            }
+            if (!this.isAdmin) this.syncToState(s);
         }
     },
 
-    // 7. Load new source into the player
     loadSource(url) {
-        console.log(`Loading new source: ${url}`);
-        this.currentUrl = url;
-        const videoElement = this.player.elements.media;
+        console.log("Loading original:", url);
 
+        const finalURL = wrapWithProxy(url);
+        console.log("Using:", finalURL);
+
+        this.currentUrl = finalURL;
+
+        const videoEl = this.player.elements.media;
         if (this.hls) this.hls.destroy();
 
-        // Check if URL needs special handling
-        const needsProxy = url.includes('hakunaymatata.com') || url.includes('lok-lok');
-
-        if (url.endsWith('.m3u8') && Hls.isSupported()) {
-            const hlsConfig = needsProxy ? {
-                xhrSetup: (xhr) => {
-                    // Service Worker will handle the actual headers
-                    xhr.withCredentials = false;
-                }
-            } : {};
-            
-            this.hls = new Hls(hlsConfig);
-            this.hls.loadSource(url);
-            this.hls.attachMedia(videoElement);
-        } else if (url.includes('youtube.com') || url.includes('youtu.be')) {
-            this.player.source = {
-                type: 'video',
-                sources: [{ src: url, provider: 'youtube' }],
-            };
-        } else {
-            // Direct loading - Service Worker will intercept if needed
-            this.player.source = {
-                type: 'video',
-                sources: [{ src: url }],
-            };
+        if (finalURL.endsWith(".m3u8") && Hls.isSupported()) {
+            this.hls = new Hls();
+            this.hls.loadSource(finalURL);
+            this.hls.attachMedia(videoEl);
+            return;
         }
+
+        if (url.includes("youtube.com") || url.includes("youtu.be")) {
+            this.player.source = {
+                type: 'video',
+                sources: [{ src: url, provider: "youtube" }]
+            };
+            return;
+        }
+
+        this.player.source = {
+            type: "video",
+            sources: [{ src: finalURL, type: "video/mp4" }]
+        };
     },
 
-    // 8. Core synchronization logic for users
     syncToState(state) {
-        if (!state || typeof state.ts !== 'number' || !this.player || this.isAdmin) return;
+        if (this.isAdmin || !this.player) return;
 
         const now = Date.now();
-        // Allow sync if it's the first time or enough time has passed
-        if (now - this.lastSyncTime < 2000 && this.player.currentTime > 0) return;
+        if (now - this.lastSyncTime < 1500) return;
         this.lastSyncTime = now;
 
         this.isSyncing = true;
-
         try {
             const { expectedTime, isServerPaused } = this.calculateLivePoint();
-            const localTime = this.player.currentTime;
-            const timeDiff = Math.abs(localTime - expectedTime);
+            const diff = Math.abs(this.player.currentTime - expectedTime);
 
-            // Major change: Always try to play if server is not paused.
-            // This ensures users entering the room get immediate playback.
-            if (!isServerPaused) {
-                // The `play()` promise can be rejected if the user hasn't interacted with the page.
-                // Modern browsers require a user gesture.
-                const playPromise = this.player.play();
-                if (playPromise !== undefined) {
-                    playPromise.catch(error => {
-                        console.warn("Autoplay was prevented. User must interact with the page first.", error);
-                        // We might need a "Click to Play" overlay if autoplay fails consistently.
-                        // For now, we assume user has clicked to join the room, which counts as interaction.
-                    });
-                }
-            } else if (isServerPaused && !this.player.paused) {
-                this.player.pause();
-            }
+            if (!isServerPaused) this.player.play();
+            else this.player.pause();
 
-            // Sync time if difference is significant (e.g., > 2 seconds)
-            // This happens on join or if the user falls behind.
-            if (timeDiff > 2.0) {
-                const syncIndicator = document.getElementById('syncIndicator');
-                syncIndicator.style.opacity = '1';
-                setTimeout(() => syncIndicator.style.opacity = '0', 2000);
+            if (diff > 2) {
                 this.player.currentTime = expectedTime;
+                const sync = document.getElementById("syncIndicator");
+                sync.style.opacity = "1";
+                setTimeout(() => sync.style.opacity = "0", 1000);
             }
 
-            this.checkLiveStatus(); // Update live button after sync
+            this.checkLiveStatus();
         } catch (e) {
-            console.error("Error during syncToState:", e);
-        } finally {
-            setTimeout(() => { this.isSyncing = false; }, 500);
+            console.error(e);
         }
+
+        setTimeout(() => (this.isSyncing = false), 300);
     },
 
-    // 9. Setup for the "LIVE" button
+    calculateLivePoint() {
+        const st = this.lastAdminState;
+        if (!st) return { expectedTime: 0, isServerPaused: true };
+
+        let expected = st.time;
+        if (!st.paused) expected += (Date.now() - st.ts) / 1000;
+
+        return {
+            expectedTime: expected,
+            isServerPaused: st.paused
+        };
+    },
+
     setupLiveButton() {
-        const liveButton = document.getElementById('liveButton');
-        if (liveButton && !this.isAdmin) {
-            liveButton.addEventListener('click', () => this.jumpToLive());
-        }
+        const btn = document.getElementById("liveButton");
+        if (!btn || this.isAdmin) return;
+
+        btn.addEventListener("click", () => this.jumpToLive());
     },
 
-    // 10. Logic for the "LIVE" button to jump to the live point
     jumpToLive() {
-        if (!this.player || this.isAdmin || !this.lastAdminState) return;
-
-        this.isSyncing = true;
-        const syncIndicator = document.getElementById('syncIndicator');
-        syncIndicator.style.opacity = '1';
+        if (this.isAdmin || !this.lastAdminState) return;
 
         const { expectedTime } = this.calculateLivePoint();
         this.player.currentTime = expectedTime;
-
-        // If admin's stream is playing, user's should play too
-        if (!this.lastAdminState.paused) {
-            this.player.play();
-        }
-
-        this.checkLiveStatus(); // Button should turn red now
-        setTimeout(() => {
-            syncIndicator.style.opacity = '0';
-            this.isSyncing = false;
-        }, 1500);
+        if (!this.lastAdminState.paused) this.player.play();
+        this.checkLiveStatus();
     },
 
-    // 11. Calculate the theoretical "live" point in time
-    calculateLivePoint() {
-        const state = this.lastAdminState;
-        if (!state) return { expectedTime: 0, isServerPaused: true };
-
-        const serverTime = state.time;
-        const isServerPaused = state.paused;
-        let expectedTime = serverTime;
-
-        if (!isServerPaused) {
-            // Latency Compensation
-            const latency = (Date.now() - state.ts) / 1000;
-            expectedTime = serverTime + latency;
-        }
-
-        return { expectedTime, isServerPaused };
-    },
-
-    // 12. Check if the user is in sync and update the LIVE button
     checkLiveStatus() {
-        if (this.isAdmin || !this.player || !this.lastAdminState) return;
+        if (this.isAdmin || !this.lastAdminState) return;
 
-        const liveButton = document.getElementById('liveButton');
-        if (!liveButton) return;
-
+        const btn = document.getElementById("liveButton");
         const { expectedTime, isServerPaused } = this.calculateLivePoint();
-        const localTime = this.player.currentTime;
-        const timeDiff = Math.abs(localTime - expectedTime);
+        const diff = Math.abs(this.player.currentTime - expectedTime);
 
-        // If server is paused, user is "live" if they are also paused near the correct time
         if (isServerPaused) {
-             if (this.player.paused && timeDiff < 1.5) {
-                liveButton.classList.remove('is-delayed'); // "Live" (Red)
-             } else {
-                liveButton.classList.add('is-delayed'); // "Not Live" (Gray)
-             }
-             return;
+            diff < 1.5 ? btn.classList.remove("is-delayed") : btn.classList.add("is-delayed");
+            return;
         }
 
-        // If server is playing, user is "live" if they are close in time
-        if (timeDiff > 2.5) { // 2.5 second buffer
-            liveButton.classList.add('is-delayed'); // "Not Live" (Gray)
-        } else {
-            liveButton.classList.remove('is-delayed'); // "Live" (Red)
-        }
+        diff < 2.5
+            ? btn.classList.remove("is-delayed")
+            : btn.classList.add("is-delayed");
     },
 
-    // 13. Clean up resources
     destroy() {
         if (this.roomUnsubscribe) this.roomUnsubscribe();
         if (this.syncInterval) clearInterval(this.syncInterval);
@@ -351,10 +271,5 @@ const VideoPlayer = {
         if (this.hls) this.hls.destroy();
 
         this.player = null;
-        this.hls = null;
-        this.roomId = null;
-        this.currentUrl = null;
-        this.roomUnsubscribe = null;
-        this.lastAdminState = null;
     }
 };
