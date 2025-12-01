@@ -94,6 +94,9 @@ function updateProfileUI() {
 
 function wrapWithProxy(url) {
     const PROXY_ENDPOINT = "https://supermod.shetozxneno.workers.dev/?url=";
+
+    if (url.startsWith(PROXY_ENDPOINT)) return url;
+
     return PROXY_ENDPOINT + encodeURIComponent(url);
 }
 
