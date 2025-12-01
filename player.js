@@ -22,10 +22,29 @@ const VideoPlayer = {
         this.isAdmin = isAdmin;
         this.lastAdminState = null;
 
+        // Register Service Worker for protected URLs
+        this.registerServiceWorker();
+
         this.setupPlayer();
         this.applyRolePermissions();
         this.listenForSync();
         this.setupLiveButton();
+    },
+
+    // Register Service Worker
+    async registerServiceWorker() {
+        if ('serviceWorker' in navigator) {
+            try {
+                const registration = await navigator.serviceWorker.register('/sw.js');
+                console.log('Service Worker registered:', registration.scope);
+                
+                // Wait for service worker to be ready
+                await navigator.serviceWorker.ready;
+                console.log('Service Worker ready');
+            } catch (error) {
+                console.warn('Service Worker registration failed:', error);
+            }
+        }
     },
 
     // 2. Setup Plyr instance and its event listeners
@@ -168,13 +187,14 @@ const VideoPlayer = {
 
         if (this.hls) this.hls.destroy();
 
-        // Check if URL needs special referrer (like hakunaymatata CDN)
-        const needsReferrer = url.includes('hakunaymatata.com') || url.includes('lok-lok');
+        // Check if URL needs special handling
+        const needsProxy = url.includes('hakunaymatata.com') || url.includes('lok-lok');
 
         if (url.endsWith('.m3u8') && Hls.isSupported()) {
-            const hlsConfig = needsReferrer ? {
+            const hlsConfig = needsProxy ? {
                 xhrSetup: (xhr) => {
-                    xhr.setRequestHeader('Referer', 'https://lok-lok.cc/');
+                    // Service Worker will handle the actual headers
+                    xhr.withCredentials = false;
                 }
             } : {};
             
@@ -187,42 +207,7 @@ const VideoPlayer = {
                 sources: [{ src: url, provider: 'youtube' }],
             };
         } else {
-            // For direct MP4 files that need referrer, use blob approach
-            if (needsReferrer) {
-                this.loadProtectedVideo(url, videoElement);
-            } else {
-                this.player.source = {
-                    type: 'video',
-                    sources: [{ src: url }],
-                };
-            }
-        }
-    },
-
-    // Load videos that require specific referrer
-    async loadProtectedVideo(url, videoElement) {
-        try {
-            const response = await fetch(url, {
-                method: 'GET',
-                mode: 'cors',
-                credentials: 'omit',
-                headers: {
-                    'Referer': 'https://lok-lok.cc/'
-                }
-            });
-
-            if (!response.ok) throw new Error('Failed to load video');
-
-            const blob = await response.blob();
-            const blobUrl = URL.createObjectURL(blob);
-            
-            this.player.source = {
-                type: 'video',
-                sources: [{ src: blobUrl }],
-            };
-        } catch (error) {
-            console.error('Error loading protected video:', error);
-            // Fallback: try direct load anyway
+            // Direct loading - Service Worker will intercept if needed
             this.player.source = {
                 type: 'video',
                 sources: [{ src: url }],
